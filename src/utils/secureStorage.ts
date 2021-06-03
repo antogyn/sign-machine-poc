@@ -1,7 +1,7 @@
 import base64ArrayBuffer from "base64-arraybuffer";
 import { argon2id } from "hash-wasm";
 import { deleteDB, openDB } from "idb";
-import * as ed from "noble-ed25519";
+import * as nacl from "tweetnacl";
 
 // https://diafygi.github.io/webcrypto-examples/
 // https://github.com/willgm/web-crypto-tools/blob/master/src/web-crypto-tools.ts
@@ -21,7 +21,7 @@ const generateHash = (data: string): Promise<ArrayBuffer> =>
 const generateRandomValues = (length: number) =>
   window.crypto.getRandomValues(new Uint8Array(length));
 
-const generatePrivateKeyFromPwAndSalt = async (
+const generateKeyPairFromPwAndSalt = async (
   password: string,
   salt: Uint8Array
 ) => {
@@ -32,11 +32,11 @@ const generatePrivateKeyFromPwAndSalt = async (
     iterations: 256,
     memorySize: 512,
     hashLength: 32,
-    outputType: "hex",
+    outputType: "binary",
   });
 
-  // use password hash as private key
-  return Buffer.from(passwordHash, "hex");
+  // use password hash as seed
+  return nacl.sign.keyPair.fromSeed(passwordHash);
 };
 
 export const initSignMachine = async (password: string): Promise<string> => {
@@ -56,10 +56,7 @@ export const initSignMachine = async (password: string): Promise<string> => {
   const salt = generateRandomValues(16);
 
   // deterministically generate private key from pw and salt
-  const privateKey = await generatePrivateKeyFromPwAndSalt(password, salt);
-
-  // derive public key from it
-  const publicKey = await ed.getPublicKey(privateKey);
+  const { publicKey } = await generateKeyPairFromPwAndSalt(password, salt);
 
   // TODO: send public key to the server
   // sendPublicKey(publicKey)
@@ -81,12 +78,11 @@ export const sign = async (password: string, data: string): Promise<string> => {
     throw new Error("Cannot retrieve salt");
   }
 
-  const privateKey = await generatePrivateKeyFromPwAndSalt(password, salt);
+  const { secretKey } = await generateKeyPairFromPwAndSalt(password, salt);
 
-  const signature = await ed.sign(
-    Buffer.from(data).toString("hex"),
-    privateKey
-  );
+  const signature = Buffer.from(
+    nacl.sign.detached(encode(data), secretKey)
+  ).toString("hex");
 
   // TODO: Protect from timing attack
   return signature;
